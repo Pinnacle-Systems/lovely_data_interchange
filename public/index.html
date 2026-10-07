@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Logs Viewer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f8fafc;
+            --surface-color: #ffffff;
+            --border-color: #e2e8f0;
+            --text-primary: #0f172a;
+            --text-secondary: #64748b;
+            --accent-color: #3b82f6;
+            --accent-hover: #2563eb;
+            --success-color: #10b981;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header {
+            width: 100%;
+            padding: 2rem 0;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            display: flex;
+            justify-content: center;
+        }
+
+        .header-content {
+            width: 90%;
+            max-width: 1200px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #0f172a 0%, #3b82f6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .refresh-btn {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+
+        .refresh-btn:hover {
+            background-color: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .refresh-btn:active {
+            transform: translateY(0);
+        }
+
+        .container {
+            width: 90%;
+            max-width: 1200px;
+            margin: 2rem auto;
+            flex-grow: 1;
+        }
+
+        .table-wrapper {
+            background-color: var(--surface-color);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            overflow-x: auto;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th, td {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            font-weight: 600;
+            background-color: rgba(0, 0, 0, 0.2);
+        }
+
+        td {
+            font-size: 0.95rem;
+            white-space: nowrap;
+        }
+
+        tbody tr {
+            transition: background-color 0.2s ease;
+        }
+
+        tbody tr:hover {
+            background-color: rgba(0, 0, 0, 0.03);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--success-color);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .error {
+            text-align: center;
+            padding: 3rem;
+            color: #ef4444;
+            background-color: rgba(239, 68, 68, 0.1);
+            border-radius: 12px;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+
+    <header class="header">
+        <div class="header-content">
+            <h1>Device Logs Explorer</h1>
+            <button class="refresh-btn" onclick="fetchLogs()">Refresh Data</button>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="table-wrapper">
+            <table id="logs-table">
+                <thead>
+                    <tr>
+                        <th>Device Log ID</th>
+                        <th>Download Date</th>
+                        <th>Device ID</th>
+                        <th>User ID</th>
+                        <th>Log Date</th>
+                        <th>Direction</th>
+                        <th>Att Direction</th>
+                        <th>C1</th>
+                        <th>C2</th>
+                        <th>C3</th>
+                        <th>C4</th>
+                        <th>C5</th>
+                        <th>C6</th>
+                        <th>C7</th>
+                        <th>Work Code</th>
+                        <th>Update Flag</th>
+                        <th>Employee Image</th>
+                        <th>File Name</th>
+                        <th>Longitude</th>
+                        <th>Latitude</th>
+                        <th>Is Approved</th>
+                        <th>Created Date</th>
+                        <th>Last Modified Date</th>
+                        <th>Location Address</th>
+                        <th>Body Temp</th>
+                        <th>Is Mask On</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body">
+                    <tr>
+                        <td colspan="26" class="loading">Loading logs...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <script>
+        function formatDate(dateString) {
+            const options = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
+            return new Date(dateString).toLocaleDateString(undefined, options);
+        }
+
+        async function fetchLogs() {
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = '<tr><td colspan="26" class="loading">Fetching latest logs...</td></tr>';
+
+            try {
+                const response = await fetch('/api/logs');
+                if (!response.ok) throw new Error('Failed to fetch data');
+                
+                const logs = await response.json();
+                
+                if (logs.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="26" class="loading">No logs found.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = '';
+                
+                logs.forEach(log => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>#${log.DeviceLogId}</td>
+                        <td>${log.DownloadDate ? formatDate(log.DownloadDate) : 'N/A'}</td>
+                        <td>${log.DeviceId}</td>
+                        <td><span style="font-weight: 500;">${log.UserId}</span></td>
+                        <td>${log.LogDate ? formatDate(log.LogDate) : 'N/A'}</td>
+                        <td>${log.Direction ?? 'N/A'}</td>
+                        <td>${log.AttDirection ?? 'N/A'}</td>
+                        <td>${log.C1 ?? 'N/A'}</td>
+                        <td>${log.C2 ?? 'N/A'}</td>
+                        <td>${log.C3 ?? 'N/A'}</td>
+                        <td>${log.C4 ?? 'N/A'}</td>
+                        <td>${log.C5 ?? 'N/A'}</td>
+                        <td>${log.C6 ?? 'N/A'}</td>
+                        <td>${log.C7 ?? 'N/A'}</td>
+                        <td>${log.WorkCode ?? 'N/A'}</td>
+                        <td>${log.UpdateFlag ?? 'N/A'}</td>
+                        <td>${log.EmployeeImage ?? 'N/A'}</td>
+                        <td>${log.FileName ?? 'N/A'}</td>
+                        <td>${log.Longitude ?? 'N/A'}</td>
+                        <td>${log.Latitude ?? 'N/A'}</td>
+                        <td>${log.IsApproved ?? 'N/A'}</td>
+                        <td>${log.CreatedDate ? formatDate(log.CreatedDate) : 'N/A'}</td>
+                        <td>${log.LastModifiedDate ? formatDate(log.LastModifiedDate) : 'N/A'}</td>
+                        <td>${log.LocationAddress ?? 'N/A'}</td>
+                        <td>${log.BodyTemperature ?? 'N/A'}</td>
+                        <td>${log.IsMaskOn ?? 'N/A'}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+                
+            } catch (error) {
+                console.error(error);
+                tbody.innerHTML = `<tr><td colspan="26"><div class="error">Error: Could not fetch data from the server.</div></td></tr>`;
+            }
+        }
+
+        // Fetch logs on initial load
+        fetchLogs();
+    </script>
+</body>
+</html>

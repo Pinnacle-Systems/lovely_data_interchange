@@ -1,22 +1,58 @@
-import moment from "moment";
-import { dbGetDatabase, dbPushDataBase, getConnect } from "./db.connection.js";
-import { getSubscriptionDetails } from "./utils/subscriptionCall.js";
-import fs from 'fs'
-import "dotenv/config";
-import { BomIntcDetailsQuery, CmtIntcDetailsQuery, FabricDetailsQuery, orderAllowedDetailsQuery } from "./services/dataInterChange.js";
+import express from "express";
+import { dbGetDatabase, getMsSqlPoolConnect, dbPushDatabase, getOracleSqlConnect } from "./db.connection.js";
 
 
+const app = express();
+app.use(express.json());
 
+function getDeviceLogsQuery(month, year, existingRows = []) {
+    const paddedMonth = month.toString().padStart(2, '0');
+    let baseQuery = `SELECT * FROM dbo.DeviceLogs_${paddedMonth}_${year}`;
+    const conditions = [];
+    if (existingRows && existingRows.length > 0) {
+        const deviceConditions = existingRows.map(row => {
+            const deviceId = row[2]; // DeviceId is at index 2
+            let downloadDate = row[1];
+            console.log(downloadDate, "downloadDate")
+            function formatIST(date) {
+                const ist = new Date(date.getTime() + (5.5 * 60 * 60 * 1000));
 
+                return ist.toISOString()
+                    .replace('T', ' ')
+                    .replace('Z', '')
+                    .substring(0, 19);
+            }
+            downloadDate = formatIST(downloadDate)
+            return `(DeviceId = ${deviceId} AND DownloadDate > '${downloadDate}')`;
+        });
+        conditions.push(`${deviceConditions.join(' AND ')}`);
+    }
 
-// const getorderallowdetintQuery = `SELECT * FROM orderallowdetint WHERE ISCOMPLETE = 1 `
+    if (conditions.length) {
+        baseQuery += ' WHERE ' + conditions.join(' AND ');
+    }
+    return baseQuery;
+}
 
-// const getFabricIntQuery = ` SELECT * FROM FabricINT WHERE ISCOMPLETE = 1 `
-
+const currentDate = new Date();
+const month = currentDate.getMonth() + 1;
+const year = currentDate.getFullYear();
+const oracleQuery = `SELECT *
+FROM (
+    SELECT
+        t.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY t.DEVICEID          
+            ORDER BY t.DOWNLOADDATE DESC     
+        ) AS rn
+    FROM DEVICELOGS t
+) sub
+WHERE rn = 1  `
 
 export async function getRes(connection, sqlQuery) {
     try {
         const result = await connection.execute(sqlQuery)
+
         return result
     } catch (error) {
         console.log(error);
@@ -24,193 +60,139 @@ export async function getRes(connection, sqlQuery) {
     }
 }
 
-export async function updateIsCompleteFlag(connection, sqlQuery, values) {
+export async function getRes1(connection, sqlQuery) {
     try {
+        const result = await connection.request().query(sqlQuery)
 
-        // console.log(sqlQuery, "sqlQuery");
-        // console.log(values, "values");
-
-        const result = await connection.execute(sqlQuery);
-        await connection.commit();
-        return result;
+        return result
     } catch (error) {
         console.log(error);
+        return false
+    }
+}
+
+export async function pushDataToOracle(connection, tableName, dataArray) {
+    if (!dataArray || dataArray.length === 0) {
+        console.log("No data to push to Oracle.");
+        return;
+    }
+
+    // Get the keys from the first object to form columns
+    const keys = Object.keys(dataArray[0]);
+    const columns = keys.map(k => k.toUpperCase()).join(', ');
+    // Create bind placeholders like :1, :2, :3
+    const bindVars = keys.map((_, i) => `:${i + 1}`).join(', ');
+
+    const sqlQuery = `INSERT INTO ${tableName} (${columns}) VALUES (${bindVars})`;
+
+    // Map the array of objects into an array of arrays (which executeMany expects)
+    const binds = dataArray.map(obj => keys.map(k => obj[k]));
+
+    const options = {
+        autoCommit: true // Automatically commit the insert
+    };
+
+    // console.log(sqlQuery, "sqlQuery")
+
+    try {
+        // console.log(`Pushing ${dataArray.length} records to Oracle table: ${tableName}`);
+        const result = await connection.executeMany(sqlQuery, binds, options);
+        // console.log(`Successfully inserted ${result.rowsAffected} rows into ${tableName}`);
+        return result;
+    } catch (error) {
+        console.error("Error pushing data to Oracle:", error);
         return false;
     }
 }
 
-
-export async function constructUpdateQuery1(resp, field) {
-    const ids = [
-        ...new Set(
-            resp
-                .map(item => item[field])
-                .filter(v => v !== undefined && v !== null)
-        )
-    ];
-    console.log(ids.length, "unique orderallowdetint");
-
-    if (!ids.length) return null;
-
-    const queries = [];
-    for (let i = 0; i < ids.length; i += 1000) {
-        const inClause = ids.slice(i, i + 1000).map(id => `'${id}'`).join(', ');
-        queries.push(`
-    UPDATE orderallowdetint
-    SET ISCOMPLETE = 1
-    WHERE "erp_no" IN (${inClause})
-  `);
-    }
-
-    return { queries, values: ids };
-}
-
-
-export async function constructUpdateQuery2(resp, field) {
-    const ids = [
-        ...new Set(
-            resp
-                .map(item => item[field])
-                .filter(v => v !== undefined && v !== null)
-        )
-    ];
-
-    if (!ids.length) return null;
-    console.log(ids.length, "unique FabricINT");
-
-    const queries = [];
-    for (let i = 0; i < ids.length; i += 1000) {
-        const inClause = ids.slice(i, i + 1000).map(id => `'${id}'`).join(', ');
-        queries.push(`
-    UPDATE FabricINT
-    SET ISCOMPLETE = 1 
-    WHERE "srno" IN (${inClause})
-  `);
-    }
-
-    return { queries, values: ids };
-}
+async function testConnection() {
 
 
 
-export async function constructUpdateQuery3(resp, field) {
-    const ids = [
-        ...new Set(
-            resp
-                .map(item => item[field])
-                .filter(v => v !== undefined && v !== null)
-        )
-    ];
 
-    if (!ids.length) return null;
-    console.log(ids.length, "unique CMTINT");
 
-    const queries = [];
-    for (let i = 0; i < ids.length; i += 1000) {
-        const inClause = ids.slice(i, i + 1000).map(id => `'${id}'`).join(', ');
-        queries.push(`
-    UPDATE CMTINT
-    SET ISCOMPLETE = 1 
-    WHERE "SR NO" IN (${inClause})
-  `);
-    }
+    const connectionForOracle = await getOracleSqlConnect(dbPushDatabase);
+    const existingResult = await getRes(connectionForOracle, oracleQuery);
+    const existingRows = existingResult?.rows || [];
+    // Helper to safely convert dates to ISO strings
+    const toISO = (val) => {
+        if (!val) return '';
+        const d = val instanceof Date ? val : new Date(val);
+        return isNaN(d.getTime()) ? '' : d.toISOString();
+    };
+    const existingSet = new Set(
+        existingRows.map(row => {
+            const deviceId = row[2];
+            const downloadDate = row[1];
+            return `${deviceId}_${toISO(downloadDate)}`;
+        })
+    );
+    console.log(existingRows, "existingRows");
 
-    return { queries, values: ids };
-}
 
-export async function constructUpdateQuery4(resp, field) {
-    const ids = [
-        ...new Set(
-            resp
-                .map(item => item[field])
-                .filter(v => v !== undefined && v !== null)
-        )
-    ];
+    const pool = await getMsSqlPoolConnect(dbGetDatabase);
+    const connectionForMsSql = await pool.connect();
 
-    if (!ids.length) return null;
-    console.log(ids.length, "unique BOMINT");
+    const mssqlQuery = getDeviceLogsQuery(month, year, existingRows);
 
-    const queries = [];
-    for (let i = 0; i < ids.length; i += 1000) {
-        const inClause = ids.slice(i, i + 1000).map(id => `'${id}'`).join(', ');
-        queries.push(`
-    UPDATE BOMINT
-    SET ISCOMPLETE = 1 
-    WHERE "SRNO" IN (${inClause})
-  `);
-    }
+    console.log(mssqlQuery, "mssqlQuery")
+    const resultForMsSql = await getRes1(connectionForMsSql, mssqlQuery);
+    const msRecords = resultForMsSql?.recordsets?.[0] || [];
 
-    return { queries, values: ids };
-}
+    // Filter out records that are already present in Oracle
+    // const newRows = msRecords.filter(row => {
+    //     const key = `${row.UserId}_${toISO(row.LogDate)}`;
+    //     console.log({
+    //         key,
+    //         existingSet: existingSet.has(key)
+    //     })
+    //     return !existingSet.has(key);
+    // });
 
-const formatValue = (value, index, metaData) => {
+    // if (newRows.length === 0) {
+    //     console.log("No new records to push to Oracle.");
+    //     return;
+    // }
+    // console.log(newRows, "newRows");
 
-    if (metaData[index]?.dbTypeName == "DATE") {
-        if (!value || !moment(value).isValid()) {
-            return 'null';
-        }
-        return `TO_DATE('${moment(value).format("DD/MM/YYYY")}', 'DD/MM/YYYY')`;
-    } else if (metaData[index]?.dbTypeName == "NUMBER") {
-        if (value === null) {
-            return 'null';
-        }
-        return value;
-    } else {
-
-        return value !== undefined ? `'${value}'` : 'null';
-    }
+    // Push the new rows to Oracle table 'devicelogs'
+    await pushDataToOracle(connectionForOracle, 'DEVICELOGS', msRecords);
+    console.log(`Pushed ${msRecords.length} new records to Oracle table devicelogs.`);
 }
 
 
 
 
+testConnection()
+
+// CREATE TABLE DeviceLogs (
+//     DeviceLogId INT,
+//     DownloadDate TIMESTAMP,
+//     DeviceId INT,
+//     UserId VARCHAR(50),
+//     LogDate TIMESTAMP,
+//     Direction VARCHAR(50),
+//     AttDirection VARCHAR(50),
+//     C1 VARCHAR(50),
+//     C2 VARCHAR(50),
+//     C3 VARCHAR(50),
+//     C4 VARCHAR(50),
+//     C5 VARCHAR(50),
+//     C6 VARCHAR(50),
+//     C7 VARCHAR(50),
+//     WorkCode VARCHAR(50),
+//     UpdateFlag INT,
+//     EmployeeImage BLOB,
+//     FileName VARCHAR(255),
+//     Longitude VARCHAR(50),
+//     Latitude VARCHAR(50),
+//     IsApproved INT,
+//     CreatedDate TIMESTAMP,
+//     LastModifiedDate TIMESTAMP,
+//     LocationAddress VARCHAR(500),
+//     BodyTemperature DECIMAL(10,2),
+//     IsMaskOn INT
+// )
 
 
 
-
-
-
-
-async function main() {
-
-
-    let connection1;
-    connection1 = await getConnect(dbGetDatabase)
-
-    try {
-        
-
-
-        await orderAllowedDetailsQuery(connection1)
-        await FabricDetailsQuery(connection1)
-
-
-        await CmtIntcDetailsQuery(connection1)
-
-        await BomIntcDetailsQuery(connection1)
-
-
-
-
-
-
-
-
-
-
-    } catch (error) {
-        console.log(error)
-        if (connection1) {
-            await connection1.rollback();
-        }
-
-    } finally {
-        if (connection1) {
-            await connection1.close()
-        }
-
-    }
-
-}
-
-main()
