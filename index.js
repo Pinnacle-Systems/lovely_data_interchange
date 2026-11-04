@@ -105,21 +105,18 @@ export async function pushDataToOracle(connection, tableName, dataArray) {
     }
 }
 
+const toISO = (val) => {
+    if (!val) return '';
+    const d = val instanceof Date ? val : new Date(val);
+    return isNaN(d.getTime()) ? '' : d.toISOString();
+};
+
 async function testConnection() {
 
-
-
-
-
     const connectionForOracle = await getOracleSqlConnect(dbPushDatabase);
+
     const existingResult = await getRes(connectionForOracle, oracleQuery);
     const existingRows = existingResult?.rows || [];
-    // Helper to safely convert dates to ISO strings
-    const toISO = (val) => {
-        if (!val) return '';
-        const d = val instanceof Date ? val : new Date(val);
-        return isNaN(d.getTime()) ? '' : d.toISOString();
-    };
     const existingSet = new Set(
         existingRows.map(row => {
             const deviceId = row[2];
@@ -127,32 +124,42 @@ async function testConnection() {
             return `${deviceId}_${toISO(downloadDate)}`;
         })
     );
-    console.log(existingRows, "existingRows");
+
+
+
+
+    // console.log(existingRows, "existingRows");
 
 
     const pool = await getMsSqlPoolConnect(dbGetDatabase);
     const connectionForMsSql = await pool.connect();
 
-    const mssqlQuery = getDeviceLogsQuery(month, year, existingRows);
 
+
+
+    // set the query which where i take the first records for each device log table
+
+    const mssqlQuery = getDeviceLogsQuery(month, year, existingRows);
     console.log(mssqlQuery, "mssqlQuery")
+
     const resultForMsSql = await getRes1(connectionForMsSql, mssqlQuery);
     const msRecords = resultForMsSql?.recordsets?.[0] || [];
 
-    // Filter out records that are already present in Oracle
-    // const newRows = msRecords.filter(row => {
-    //     const key = `${row.UserId}_${toISO(row.LogDate)}`;
-    //     console.log({
-    //         key,
-    //         existingSet: existingSet.has(key)
-    //     })
-    //     return !existingSet.has(key);
-    // });
 
-    // if (newRows.length === 0) {
-    //     console.log("No new records to push to Oracle.");
-    //     return;
-    // }
+    // Filter out records that are already present in Oracle
+    const newRows = msRecords.filter(row => {
+        const key = `${row.UserId}_${toISO(row.LogDate)}`;
+        // console.log({
+        //     key,
+        //     existingSet: existingSet.has(key)
+        // })
+        return !existingSet.has(key);
+    });
+
+    if (newRows.length === 0) {
+        console.log("No new records to push to Oracle.");
+        return;
+    }
     // console.log(newRows, "newRows");
 
     // Push the new rows to Oracle table 'devicelogs'

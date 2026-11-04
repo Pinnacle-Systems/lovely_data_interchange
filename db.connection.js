@@ -53,8 +53,11 @@ export async function getOracleSqlConnect(dbConfig) {
       password: dbConfig.password,
       connectString: dbConfig.connectString
     });
+    console.log("Oracle Db Connected");
 
     return connection
+
+
   } catch (err) {
     return console.log(err);
 
