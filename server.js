@@ -269,7 +269,10 @@ export async function runSyncJob() {
 
   isRunning = true;
   lastSyncStatus.status = "running";
-  lastSyncStatus.lastRunAt = new Date().toISOString();
+  lastSyncStatus.lastRunAt = new Date().toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour12: false
+  });
 
   try {
     const result = await testConnection();
