@@ -17,7 +17,8 @@ export const dbGetDatabase = {
   database: process.env.GETDB_DATABASE || "",
   options: {
     encrypt: false,
-    trustServerCertificate: true
+    trustServerCertificate: true,
+    useUTC: false
   },
   pool: {
     max: 10,

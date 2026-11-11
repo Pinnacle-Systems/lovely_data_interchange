@@ -23,8 +23,25 @@ function getDeviceLogsQuery(month, year, existingRows = []) {
   const conditions = [];
   if (existingRows && existingRows.length > 0) {
     const deviceConditions = existingRows.map((row) => {
-      const deviceId = row[2]; // DeviceId is at index 2
-      let downloadDate = row[1];
+      const deviceId = row[2];
+      let downloadDate = row[1].toString();
+
+      // console.log(row[1].toString());              // Wed Nov 11 2026 10:11:02 GMT+0530
+      // console.log(row[1].toLocaleString("en-IN")); // 11/11/2026, 10:11:02 am
+
+
+      // console.log(deviceId, "deviceId", downloadDate)
+
+
+      // const fmt = (d) => new Date(d).toISOString().replace("T", " ").replace("Z", "");
+
+      const fmt = (d) => {
+        d = new Date(d);
+        const p = (n, l = 2) => String(n).padStart(l, "0");
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+      };
+
+      console.log(deviceId, "deviceId", fmt(downloadDate))
 
       function formatIST(date) {
         const d = new Date(date);
@@ -36,7 +53,9 @@ function getDeviceLogsQuery(month, year, existingRows = []) {
           .replace("Z", "")
           .substring(0, 19);
       }
-      downloadDate = formatIST(downloadDate);
+      // downloadDate = formatIST(downloadDate);
+      downloadDate = fmt(downloadDate)
+
       return `(DeviceId = ${deviceId} AND DownloadDate > '${downloadDate}')`;
     });
     conditions.push(`(${deviceConditions.join(" OR ")})`);
@@ -48,36 +67,7 @@ function getDeviceLogsQuery(month, year, existingRows = []) {
   return baseQuery;
 }
 
-function getDeviceLogsFromMysqlQuery(month, year, existingRows = []) {
-  const paddedMonth = month.toString();
-  let baseQuery = `SELECT * FROM DeviceLogs_${paddedMonth}_${year}`;
-  const conditions = [];
-  if (existingRows && existingRows.length > 0) {
-    const deviceConditions = existingRows.map((row) => {
-      const deviceId = row[2]; // DeviceId is at index 2
-      let downloadDate = row[1];
 
-      function formatIST(date) {
-        const d = new Date(date);
-        const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
-
-        return ist
-          .toISOString()
-          .replace("T", " ")
-          .replace("Z", "")
-          .substring(0, 19);
-      }
-      downloadDate = formatIST(downloadDate);
-      return `(DeviceId = ${deviceId} AND DownloadDate > '${downloadDate}')`;
-    });
-    conditions.push(`(${deviceConditions.join(" OR ")})`);
-  }
-
-  if (conditions.length) {
-    baseQuery += " WHERE " + conditions.join(" AND ");
-  }
-  return baseQuery;
-}
 
 const currentDate = new Date();
 const oracleQuery = `SELECT * FROM (
@@ -96,6 +86,7 @@ export async function pushDataToOracle(connection, tableName, dataArray) {
     console.log("No data to push to Oracle.");
     return;
   }
+  console.log("LASTRECORD", dataArray?.length, dataArray[4237])
 
   // Get the keys from the first object to form columns
   const keys = Object.keys(dataArray[0]);
@@ -106,7 +97,16 @@ export async function pushDataToOracle(connection, tableName, dataArray) {
   const sqlQuery = `INSERT INTO ${tableName} (${columns}) VALUES (${bindVars})`;
 
   // Map the array of objects into an array of arrays (which executeMany expects)
-  const binds = dataArray.map((obj) => keys.map((k) => obj[k]));
+  // Send dates as plain strings (local components) so no timezone conversion
+  // is applied by the driver; Oracle parses them with the session formats below.
+  const pad = (n) => String(n).padStart(2, "0");
+  const toPlain = (v) =>
+    v instanceof Date
+      ? `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())} ${pad(v.getHours())}:${pad(v.getMinutes())}:${pad(v.getSeconds())}`
+      : v;
+  const binds = dataArray.map((obj) => keys.map((k) => toPlain(obj[k])));
+  await connection.execute(`ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS'`);
+  await connection.execute(`ALTER SESSION SET NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS'`);
 
   const options = {
     autoCommit: false,
@@ -181,6 +181,8 @@ export async function testConnection() {
     const existingResult = await getRes(connectionForOracle, oracleQuery);
     const existingRows = existingResult?.rows || [];
 
+    console.log(existingRows, "existingRows")
+
     // Find the earliest date to determine how many tables to query
     let minDate = new Date();
     if (existingRows && existingRows.length > 0) {
@@ -197,15 +199,27 @@ export async function testConnection() {
     const now = new Date();
 
     // Generate list of months to query
+    // const tablesToQuery = [];
+    // let tempDate = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+    // while (tempDate <= now) {
+    //   tablesToQuery.push({
+    //     month: tempDate.getMonth() + 1,
+    //     year: tempDate.getFullYear(),
+    //   });
+    //   tempDate.setMonth(tempDate.getMonth() + 1);
+    // }
+
     const tablesToQuery = [];
-    let tempDate = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
-    while (tempDate <= now) {
+    let tempDate = new Date(Date.UTC(minDate.getUTCFullYear(), minDate.getUTCMonth(), 1));
+    const nowUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    while (tempDate.getTime() <= nowUtc) {
       tablesToQuery.push({
-        month: tempDate.getMonth() + 1,
-        year: tempDate.getFullYear(),
+        month: tempDate.getUTCMonth() + 1,
+        year: tempDate.getUTCFullYear(),
       });
-      tempDate.setMonth(tempDate.getMonth() + 1);
+      tempDate.setUTCMonth(tempDate.getUTCMonth() + 1);
     }
+
 
     console.log(tablesToQuery, "tablesToQuery");
 
