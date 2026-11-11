@@ -200,6 +200,3 @@ testConnection()
 //     BodyTemperature DECIMAL(10,2),
 //     IsMaskOn INT
 // )
-
-
-

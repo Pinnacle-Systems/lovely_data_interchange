@@ -1,4 +1,8 @@
 import express from "express";
+import dotenv from "dotenv";
+import cron from "node-cron";
+
+dotenv.config();
 import {
   dbGetDatabase,
   getMsSqlPoolConnect,
@@ -161,72 +165,175 @@ export async function pushDataToMysql(connection, tableName, dataArray) {
   }
 }
 
-async function testConnection() {
+export async function testConnection() {
   let connectionForMysql, connectionForOracle, connectionForMsSql;
 
   try {
-    connectionForMysql = await getMySqlConnect(dbPushMysql);
-    if (!connectionForMysql) throw new Error("MySQL connection failed.");
+    // connectionForMysql = await getMySqlConnect(dbPushMysql);
+    // if (!connectionForMysql) throw new Error("MySQL connection failed.");
 
     connectionForOracle = await getOracleSqlConnect(dbPushDatabase);
     if (!connectionForOracle) throw new Error("Oracle connection failed.");
 
     connectionForMsSql = await getMsSqlPoolConnect(dbGetDatabase);
     if (!connectionForMsSql) throw new Error("MSSQL connection failed.");
+
+    const existingResult = await getRes(connectionForOracle, oracleQuery);
+    const existingRows = existingResult?.rows || [];
+
+    // Find the earliest date to determine how many tables to query
+    let minDate = new Date();
+    if (existingRows && existingRows.length > 0) {
+      existingRows.forEach((row) => {
+        let downloadDate = row[1];
+        const d = new Date(downloadDate);
+        if (!isNaN(d.getTime()) && d < minDate) {
+          minDate = d;
+        }
+      });
+    }
+
+    // Dynamic current date so 24/7 scheduler always uses live date
+    const now = new Date();
+
+    // Generate list of months to query
+    const tablesToQuery = [];
+    let tempDate = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+    while (tempDate <= now) {
+      tablesToQuery.push({
+        month: tempDate.getMonth() + 1,
+        year: tempDate.getFullYear(),
+      });
+      tempDate.setMonth(tempDate.getMonth() + 1);
+    }
+
+    console.log(tablesToQuery, "tablesToQuery");
+
+    let msRecords = [];
+    for (const { month, year } of tablesToQuery) {
+      const mssqlQuery = getDeviceLogsQuery(month, year, existingRows);
+      console.log(mssqlQuery, "mssqlQuery");
+
+      const resultForMsSql = await getRes1(connectionForMsSql, mssqlQuery);
+      const records = resultForMsSql?.recordsets?.[0] || [];
+      msRecords = msRecords.concat(records);
+    }
+
+    await pushDataToOracle(connectionForOracle, "DEVICELOGS", msRecords);
+    console.log(`Pushed ${msRecords.length} records to Oracle DEVICELOGS`);
+
+    return {
+      success: true,
+      recordsCount: msRecords.length,
+      message: `Successfully pushed ${msRecords.length} records to Oracle`
+    };
   } catch (error) {
-    console.error("Database connection error. Aborting process:");
-    console.error(error.message || error);
-    return;
+    console.error("Database connection / sync error:", error.message || error);
+    throw error;
+  } finally {
+    // Cleanly close connections to prevent socket & session leaks
+    // if (connectionForMysql) {
+    //   try {
+    //     if (typeof connectionForMysql.end === "function") await connectionForMysql.end();
+    //   } catch (e) {}
+    // }
+    if (connectionForMsSql) {
+      try {
+        if (typeof connectionForMsSql.close === "function") await connectionForMsSql.close();
+      } catch (e) { }
+    }
+    if (connectionForOracle) {
+      try {
+        if (typeof connectionForOracle.close === "function") await connectionForOracle.close();
+      } catch (e) { }
+    }
   }
-
-  const existingResult = await getRes(connectionForOracle, oracleQuery);
-  const existingRows = existingResult?.rows || [];
-
-  // Find the earliest date to determine how many tables to query
-  let minDate = new Date();
-  if (existingRows && existingRows.length > 0) {
-    existingRows.forEach((row) => {
-      let downloadDate = row[1];
-      const d = new Date(downloadDate);
-      if (!isNaN(d.getTime()) && d < minDate) {
-        minDate = d;
-      }
-    });
-  }
-
-  // Generate list of months to query
-  const tablesToQuery = [];
-  let tempDate = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
-  while (tempDate <= currentDate) {
-    tablesToQuery.push({
-      month: tempDate.getMonth() + 1,
-      year: tempDate.getFullYear(),
-    });
-    tempDate.setMonth(tempDate.getMonth() + 1);
-  }
-
-  console.log(tablesToQuery, "tablesToQuery")
-
-  let msRecords = [];
-  for (const { month, year } of tablesToQuery) {
-    const mssqlQuery = getDeviceLogsQuery(month, year, existingRows);
-    console.log(mssqlQuery, "mssqlQuery")
-
-    const resultForMsSql = await getRes1(connectionForMsSql, mssqlQuery);
-    const records = resultForMsSql?.recordsets?.[0] || [];
-    msRecords = msRecords.concat(records);
-  }
-  await pushDataToOracle(connectionForOracle, "DEVICELOGS", msRecords);
-
-  // let records = [];
-
-  // for (const { month, year } of tablesToQuery) {
-  //   const mysqlQuery = getDeviceLogsFromMysqlQuery(month, year, existingRows);
-  //   const resultForMsSql = await getRes(connectionForMysql, mysqlQuery);
-  //   records = resultForMsSql?.[0] || [];
-  // }
-
-  // await pushDataToOracle(connectionForOracle, "DEVICELOGS", records);
 }
 
-testConnection();
+// ----------------------------------------------------
+// State tracker for monitoring and health check
+// ----------------------------------------------------
+let isRunning = false;
+let lastSyncStatus = {
+  lastRunAt: null,
+  status: "idle",
+  lastMessage: "Service started, awaiting first run",
+  recordsPushed: 0,
+};
+
+export async function runSyncJob() {
+  if (isRunning) {
+    console.log(`[${new Date().toISOString()}] Previous sync is still running. Skipping this cycle.`);
+    return { success: false, message: "Sync already in progress" };
+  }
+
+  isRunning = true;
+  lastSyncStatus.status = "running";
+  lastSyncStatus.lastRunAt = new Date().toISOString();
+
+  try {
+    const result = await testConnection();
+    lastSyncStatus.status = "success";
+    lastSyncStatus.lastMessage = result?.message || "Sync completed successfully";
+    lastSyncStatus.recordsPushed = result?.recordsCount || 0;
+    return result;
+  } catch (err) {
+    lastSyncStatus.status = "error";
+    lastSyncStatus.lastMessage = err?.message || String(err);
+    return { success: false, error: err?.message };
+  } finally {
+    isRunning = false;
+  }
+}
+
+// ----------------------------------------------------
+// node-cron Scheduler Setup
+// ----------------------------------------------------
+const intervalMinutes = parseInt(process.env.SYNC_INTERVAL_MINUTES, 10) || 5;
+const cronExpression = process.env.CRON_SCHEDULE || `*/${intervalMinutes} * * * *`;
+
+console.log(`[Cron] Initializing cron job: "${cronExpression}" (every ${intervalMinutes} minutes)`);
+
+cron.schedule(cronExpression, async () => {
+  console.log(`[Cron] Scheduled execution triggered at ${new Date().toISOString()}`);
+  await runSyncJob();
+});
+
+// ----------------------------------------------------
+// Express API Routes (for Subdomain / Reverse Proxy / Health Check)
+// ----------------------------------------------------
+app.get("/", (req, res) => {
+  res.json({
+    service: "Lovely Data Interchange Service",
+    status: "online",
+    intervalMinutes,
+    cronExpression,
+    isRunning,
+    lastSyncStatus,
+  });
+});
+
+app.get("/status", (req, res) => {
+  res.json({
+    isRunning,
+    ...lastSyncStatus,
+  });
+});
+
+app.all("/sync", async (req, res) => {
+  if (isRunning) {
+    return res.status(409).json({ message: "Sync already in progress", isRunning: true });
+  }
+  runSyncJob();
+  res.json({ message: "Sync triggered successfully" });
+});
+
+// ----------------------------------------------------
+// Start Express Server
+// ----------------------------------------------------
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Server is running and listening on port ${PORT}`);
+  // Run once immediately on startup
+  runSyncJob();
+});
